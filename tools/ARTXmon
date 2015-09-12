@@ -1,0 +1,745 @@
+#!/usr/bin/perl -w
+################################################################################
+#
+# ARTX monitor
+#
+################################################################################
+#
+# ARTX - A realtime executive library for Atmel AVR microcontrollers
+#
+# Copyright (C) 2007-2015 Marcus Holland-Moritz.
+#
+# ARTX is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# ARTX is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with ARTX.  If not, see <http://www.gnu.org/licenses/>.
+#
+################################################################################
+
+package ARTX::Parser;
+
+use strict;
+use warnings;
+use Convert::Binary::C;
+
+use constant MARKER => 'ARTX';
+
+my $avrcfg = require 'tools/avr-gcc-config.pl';
+my $CBC = Convert::Binary::C->new(%$avrcfg);
+$CBC->Define(qw( __DOXYGEN__ ARTX_USE_CONFIG_H __AVR_ATmega32__ ));
+$CBC->Include('include');
+$CBC->OrderMembers(1);
+$CBC->parse_file('artx/task.h');
+
+sub new
+{
+  my $class = shift;
+  my $self = bless {
+    debug => 0,
+    @_,
+    _data => '',
+    _state => 'search_marker',
+    _parsed => [],
+    _parsing => undef,
+    _marker_found => 0,
+  }, $class;
+  $self;
+}
+
+sub _debug
+{
+  my($self, $level, @args) = @_;
+
+  if ($self->{debug} >= $level) {
+    print STDERR @args;
+  }
+}
+
+sub marker
+{
+  my $self = shift;
+  my $found = $self->{_marker_found};
+  $self->{_marker_found} = 0;
+  $found;
+}
+
+sub insert
+{
+  my $self = shift;
+  $self->{_data} .= shift;
+  $self->_parse;
+}
+
+sub ready
+{
+  my $self = shift;
+  return @{$self->{_parsed}} > 0;
+}
+
+sub get
+{
+  my $self = shift;
+  shift @{$self->{_parsed}};
+}
+
+sub _parse
+{
+  my $self = shift;
+  while (1) {
+    $self->_debug(2, "state: $self->{_state}\n");
+    my $meth = '_' . $self->{_state};
+    my $state = $self->$meth() or last;
+    $self->{_state} = $state;
+  }
+}
+
+sub _have
+{
+  my($self, $count) = @_;
+  length($self->{_data}) >= $count;
+}
+
+sub _read
+{
+  my($self, $count) = @_;
+  $self->_debug(2, "reading $count bytes\n");
+  my $read = substr $self->{_data}, 0, $count, '';
+  $self->_debug(3, join(' ', map { sprintf "%02X", $_ } unpack "C*", $read), "\n");
+  return $read;
+}
+
+sub _search_marker
+{
+  my $self = shift;
+
+  if ($self->_have(length MARKER)) {
+    my $ix = index $self->{_data}, MARKER;
+    if ($ix >= 0) {
+      $self->{_marker_found} = 1;
+      substr $self->{_data}, 0, $ix + length(MARKER), '';
+      return 'parse_header_start';
+    }
+    substr $self->{_data}, 0, length($self->{_data}) - length(MARKER) + 1, '';
+  }
+
+  undef;
+}
+
+sub _parse_header_start
+{
+  my $self = shift;
+
+  if ($self->_have(2)) {
+    $self->{_parsing}{header} = $self->_read(2);
+    @{$self->{_parsing}}{qw( version hdr_size )} = unpack "C*", $self->{_parsing}{header};
+    return 'parse_header';
+  }
+
+  return undef;
+}
+
+sub _parse_header
+{
+  my $self = shift;
+
+  my $header_size = $self->{_parsing}{hdr_size} - 2;  # 2 bytes already read before
+
+  if ($self->_have($header_size)) {
+    $self->{_parsing} = do { local $^W; $CBC->unpack('struct artx_monitor_header',
+                             $self->{_parsing}{header} . $self->_read($header_size)) };
+    return 'parse_block';
+  }
+
+  undef;
+}
+
+sub _parse_block
+{
+  my $self = shift;
+
+  if ($self->_have(1)) {
+    my $block = $self->_read(1);
+
+    if ($block eq 'R') {
+      return 'parse_rcb';
+    }
+    else {
+      if (exists $self->{_parsing}{cur_tcb}) {
+        my $tcb = delete $self->{_parsing}{cur_tcb};
+        $tcb->{monitor_interval} = $self->{_parsing}{monitor_interval};
+        $tcb->{nom_tick_duration} = $self->{_parsing}{nom_tick_duration};
+        $tcb->{cur_tick_duration} = $self->{_parsing}{cur_tick_duration};
+        $tcb->{tick_prescaler} = $self->{_parsing}{tick_prescaler};
+        $tcb->{clock_frequency} = $self->{_parsing}{clock_frequency};
+        push @{$self->{_parsed}}, $tcb;
+      }
+
+      if ($block eq 'T') {
+        return 'parse_tcb';
+      }
+      else {
+        $self->{_parsing} = undef;
+        return 'search_marker';
+      }
+    }
+  }
+
+  undef;
+}
+
+sub _parse_tcb
+{
+  my $self = shift;
+
+  my $tcb_size = $self->{_parsing}{tcb_size};
+
+  if ($self->_have($tcb_size)) {
+    my $tcb = do { local $^W; $CBC->unpack('struct artx_tcb', $self->_read($tcb_size)) };
+    $tcb->{name} = '';
+    $self->{_parsing}{cur_tcb} = $tcb;
+    $self->{_parsing}{cur_tcb}{rout} = [];
+    return 'parse_task_name';
+  }
+
+  undef;
+}
+
+sub _parse_task_name
+{
+  my $self = shift;
+
+  while ($self->_have(1)) {
+    my $ch = $self->_read(1);
+    if (ord($ch) == 0) {
+      $self->_debug(1, "received task block '$self->{_parsing}{cur_tcb}{name}'\n");
+      return 'parse_block';
+    }
+    $self->{_parsing}{cur_tcb}{name} .= $ch;
+  }
+
+  undef;
+}
+
+sub _parse_rcb
+{
+  my $self = shift;
+
+  my $rcb_size = $self->{_parsing}{rcb_size};
+
+  if ($self->_have($rcb_size)) {
+    my $rcb = do { local $^W; $CBC->unpack('struct artx_rcb', $self->_read($rcb_size)) };
+    $rcb->{name} = '';
+    $self->{_parsing}{cur_rcb} = $rcb;
+    return 'parse_rout_name';
+  }
+
+  undef;
+}
+
+sub _parse_rout_name
+{
+  my $self = shift;
+
+  while ($self->_have(1)) {
+    my $ch = $self->_read(1);
+    if (ord($ch) == 0) {
+      $self->_debug(1, "received routine block '$self->{_parsing}{cur_rcb}{name}'\n");
+      push @{$self->{_parsing}{cur_tcb}{rout}}, $self->{_parsing}{cur_rcb};
+      return 'parse_block';
+    }
+    $self->{_parsing}{cur_rcb}{name} .= $ch;
+  }
+
+  undef;
+}
+
+package ARTX::CellRendererBar;
+
+use strict;
+use warnings;
+use Glib qw(G_PARAM_READWRITE);
+use Gtk2;
+use Glib::Object::Subclass
+  Gtk2::CellRenderer::,
+  properties => [
+    Glib::ParamSpec->double('fraction',
+                            'Fraction',
+                            'The fractional part to display',
+                            0.0, 1.0, 0.0, G_PARAM_READWRITE),
+    Glib::ParamSpec->string('text',
+                            'Text',
+                            'The text to display',
+                            '', G_PARAM_READWRITE),
+    Glib::ParamSpec->string('barcolor',
+                            'Bar Color',
+                            'The color of the rendered bar',
+                            '', G_PARAM_READWRITE),
+  ],
+  ;
+
+
+sub INIT_INSTANCE {
+  my $self = shift;
+  $self->set (mode => 'inert',
+              xpad => 2,
+              ypad => 2);
+  $self->{fraction} = 0.0;
+  $self->{barcolor} = '#0000FF';
+}
+
+sub GET_SIZE {
+  my ($cell, $widget, $cell_area) = @_;
+
+  my $width  = - int ($cell->get('xpad')*2);
+  my $height = - int ($cell->get('ypad')*2);
+
+  if ($cell_area) {
+    $width  += $cell_area->width;
+    $height += $cell_area->height;
+  }
+
+  return (0, 0, $width, $height);
+}
+
+sub RENDER
+{
+  my ($cell, $window, $widget, $background_area, $cell_area, $expose_area, $flags) = @_;
+
+  my ($xoff, $yoff, $width, $height) = $cell->GET_SIZE($widget, $cell_area);
+  my ($xpad, $ypad) = $cell->get(qw(xpad ypad));
+
+  my $style = $widget->style;
+
+  my $cr = Gtk2::Gdk::Cairo::Context->create($window);
+
+  $cr->rectangle($cell_area->x + $xpad - 1, $cell_area->y + $ypad - 1, $width + 1, $height + 1);
+  $cr->set_source_color($style->fg('normal'));
+  $cr->fill;
+
+  ### doesn't work :-(
+  # my $pat = Cairo::LinearGradient->create(0, 0, $width, 0);
+  # $pat->add_color_stop_rgb(1.0, 1, 0, 0);
+  # $pat->add_color_stop_rgb(0.0, 0, 1, 0);
+  # $cr->set_source($pat);
+
+  $cr->rectangle($cell_area->x + $xpad, $cell_area->y + $ypad, $width - 1, $height - 1);
+  $cr->set_source_color($style->bg('normal'));
+  $cr->fill;
+
+  my $pw = $width*$cell->{fraction};
+
+  if ($pw) {
+    $cr->rectangle($cell_area->x + $xpad, $cell_area->y + $ypad, $pw - 1, $height - 1);
+    # $cr->set_source_color($style->bg('selected'));
+    $cr->set_source_color(Gtk2::Gdk::Color->parse($cell->{barcolor}));
+    $cr->fill;
+  }
+
+  my $layout = $widget->create_pango_layout("");
+
+  $layout->set_markup($cell->{text});
+
+  my ($w, $h) = $layout->get_pixel_size;
+
+  my $clip = Gtk2::Gdk::Rectangle->new($cell_area->x + $xpad, $cell_area->y + $ypad,
+                                       $pw, $height);
+
+  $style->paint_layout ($window,
+                        'selected',
+                        0,
+                        $clip,
+                        $widget,
+                        "cellrenderertext",
+                        $cell_area->x + $xpad + ($width - $w)/2,
+                        $cell_area->y + $ypad + ($height - $h)/2,
+                        $layout);
+
+  $clip->x($clip->x + $clip->width);
+  $clip->width($width - $clip->width);
+
+  $style->paint_layout ($window,
+                        'normal',
+                        0,
+                        $clip,
+                        $widget,
+                        "cellrenderertext",
+                        $cell_area->x + $xpad + ($width - $w)/2,
+                        $cell_area->y + $ypad + ($height - $h)/2,
+                        $layout);
+}
+
+
+package main;
+
+use strict;
+use warnings;
+use Device::SerialPort;
+use Data::Dumper;
+use Time::HiRes qw( gettimeofday tv_interval );
+use Gtk2 -init;
+use Gtk2::Helper;
+use Glib ':constants';
+use Getopt::Long;
+use Pod::Usage;
+use Config::Tiny;
+
+my $config = Config::Tiny->read("$ENV{HOME}/.artxmonrc");
+
+my %OPT = (
+  device => '/dev/ttyUSB1',
+  baudrate => 9600,
+  debug => 0,
+  defined $config ? %{$config->{_}} : (),
+);
+
+GetOptions(\%OPT, qw( device=s baudrate=i debug+ ))
+  or pod2usage(2);
+
+use constant C_NAME => 0;
+use constant C_PRIO => 1;
+use constant C_IVAL => 2;
+use constant C_SCHD => 3;
+use constant C_RUNC => 4;
+use constant C_STSZ => 5;
+use constant C_STUS => 6;
+use constant C_SUPB => 7;
+use constant C_SUTX => 8;
+use constant C_LOAD => 9;
+use constant C_LDTX => 10;
+use constant C_AVER => 11;
+use constant C_AVTX => 12;
+use constant C_PEAK => 13;
+use constant C_PKTX => 14;
+
+use constant CS_TASK => 15;
+use constant CS_LOAD => 16;
+use constant CS_BCOL => 17;
+
+my $model = Gtk2::TreeStore->new(qw/ Glib::String
+                                     Glib::Int
+                                     Glib::String
+                                     Glib::Int
+                                     Glib::Int
+                                     Glib::Int
+                                     Glib::Int
+                                     Glib::Float
+                                     Glib::String
+                                     Glib::Float
+                                     Glib::String
+                                     Glib::Float
+                                     Glib::String
+                                     Glib::Float
+                                     Glib::String
+                                     Glib::Boolean
+                                     Glib::Boolean
+                                     Glib::String /);
+
+my $treeview = Gtk2::TreeView->new($model);
+
+my $render = Gtk2::CellRendererText->new;
+$render->set(xalign => 0.0);
+my $col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Name', $render, markup => C_NAME);
+my $col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 150);
+$col->set_resizable(TRUE);
+
+$render = Gtk2::CellRendererText->new;
+$render->set(xalign => 1.0);
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Priority', $render, text => C_PRIO, visible => CS_TASK);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 60);
+$col->set_resizable(TRUE);
+
+$render = Gtk2::CellRendererText->new;
+$render->set(xalign => 1.0);
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Interval', $render, text => C_IVAL, visible => CS_TASK);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 90);
+$col->set_resizable(TRUE);
+
+$render = Gtk2::CellRendererText->new;
+$render->set(xalign => 1.0);
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Schedule', $render, text => C_SCHD, visible => CS_TASK);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 70);
+$col->set_resizable(TRUE);
+
+$render = Gtk2::CellRendererText->new;
+$render->set(xalign => 1.0);
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Runs', $render, text => C_RUNC);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 50);
+$col->set_resizable(TRUE);
+
+$render = ARTX::CellRendererBar->new;
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Stack Usage', $render, fraction => C_SUPB, text => C_SUTX, visible => CS_TASK, barcolor => CS_BCOL);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 130);
+$col->set_resizable(TRUE);
+
+$render = ARTX::CellRendererBar->new;
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Total Load', $render, fraction => C_LOAD, text => C_LDTX, barcolor => CS_BCOL);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 130);
+$col->set_resizable(TRUE);
+
+$render = ARTX::CellRendererBar->new;
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Average Load', $render, fraction => C_AVER, text => C_AVTX, visible => CS_LOAD, barcolor => CS_BCOL);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 130);
+$col->set_resizable(TRUE);
+
+$render = ARTX::CellRendererBar->new;
+$col_offset = $treeview->insert_column_with_attributes
+        (-1, 'Peak Load', $render, fraction => C_PEAK, text => C_PKTX, visible => CS_LOAD, barcolor => CS_BCOL);
+$col = $treeview->get_column ($col_offset - 1);
+$col->set('min-width' => 130);
+$col->set_resizable(TRUE);
+
+my $window = Gtk2::Window->new;
+
+my $main = Gtk2::VBox->new(FALSE, 0);
+$window->add($main);
+
+my $vbox = Gtk2::VBox->new(FALSE, 8);
+$vbox->set_border_width(8);
+$main->pack_start($vbox, TRUE, TRUE, 0);
+
+my $label = Gtk2::Label->new;
+$label->set_markup("<b>Atmel RealTime eXecutive monitor</b>");
+$vbox->pack_start($label, FALSE, FALSE, 0);
+
+my $sw = Gtk2::ScrolledWindow->new(undef, undef);
+$sw->set_shadow_type('etched-in');
+$sw->set_policy('automatic', 'automatic');
+$vbox->pack_start($sw, TRUE, TRUE, 0);
+
+$sw->add($treeview);
+
+my $load = Gtk2::ProgressBar->new;
+$vbox->pack_start($load, FALSE, FALSE, 0);
+
+my $last_update = [gettimeofday];
+my $statusbar = Gtk2::Statusbar->new;
+$main->pack_start($statusbar, FALSE, FALSE, 0);
+
+$window->set_default_size(960, 400);
+$window->show_all;
+
+my $parser = ARTX::Parser->new(debug => $OPT{debug});;
+my %tasks;
+
+my $ser;
+my $watch;
+
+$window->signal_connect(destroy => sub {
+  Gtk2::Helper->remove_watch($watch);
+  undef $ser;
+  Gtk2->main_quit
+});
+
+$window->set_title("ARTXmon - $OPT{device} @ $OPT{baudrate} bps");
+
+$treeview->signal_connect(realize => sub { $_[0]->expand_all; 1 });
+$model->signal_connect(row_inserted => sub { $treeview->expand_to_path($_[1]) });
+
+Glib::Idle->add(sub {
+  $ser = Device::SerialPort->new($OPT{device});
+  $ser->baudrate($OPT{baudrate});
+  $ser->parity('none');
+  $ser->databits(8);
+  $ser->stopbits(1);
+  $ser->purge_rx;
+
+  $watch = Gtk2::Helper->add_watch($ser->{FD}, 'in', \&artx_read);
+
+  0;
+});
+
+Gtk2->main;
+
+sub calc_load
+{
+  my($task, $mon) = @_;
+
+  my($load, $avg_load, $peak_load) = (0, 0, 0);
+
+  my $monitor_cycles = $task->{nom_tick_duration}*$task->{monitor_interval}*$mon->{intervals};
+  my $spent_cycles = $mon->{total_cycles} + $mon->{current_cycles};
+
+  $load = $spent_cycles/$monitor_cycles;
+
+  if ($mon->{run_counter} > 0 && $task->{interval} > 0) {
+    my $peak_cycles = $mon->{peak_cycles};
+    my $avg_cycles = $mon->{total_cycles}/$mon->{run_counter};
+    my $cpu_cycles = $task->{nom_tick_duration}*$task->{interval};
+
+    $avg_load  = $avg_cycles/$cpu_cycles;
+    $peak_load = $peak_cycles/$cpu_cycles;
+  }
+
+  return ($load, $avg_load, $peak_load);
+}
+
+sub update_model
+{
+  my $task = shift;
+  my $display_load = $task->{interval} > 0 ? TRUE : FALSE;
+
+  my($load, $avg_load, $peak_load) = calc_load($task, $task->{mon});
+
+  unless (exists $tasks{$task->{name}}) {
+    $tasks{$task->{name}} = { iter => $model->append(undef), rout => {} };
+  }
+  my $t_iter = $tasks{$task->{name}}{iter};
+
+  my $ival = $task->{interval}*$task->{nom_tick_duration}*$task->{tick_prescaler}/$task->{clock_frequency};
+
+  if ($task->{mon}{stack_usage} > 65500) {
+    $task->{mon}{stack_usage} -= 65536;
+  }
+
+  my $stack_frac = $task->{mon}{stack_usage}/$task->{mon}{stack_size};
+  $stack_frac = 0 if $stack_frac < 0;
+  $stack_frac = 1 if $stack_frac > 1;
+
+  $model->set($t_iter,
+              C_NAME, "<b>$task->{name}</b>",
+              C_PRIO, "$task->{priority}",
+              C_IVAL, sprintf("%.2f ms", 1000*$ival),
+              C_SCHD, "$task->{schedule}",
+              C_RUNC, "$task->{mon}{run_counter}",
+              C_STSZ, "$task->{mon}{stack_size}",
+              C_STUS, "$task->{mon}{stack_usage}",
+              C_SUPB, $stack_frac,
+              C_SUTX, "<b>$task->{mon}{stack_usage}/$task->{mon}{stack_size}</b>",
+              C_LOAD, $load,
+              C_LDTX, sprintf("<b>%.2f%%</b>", 100*$load),
+              C_AVER, $avg_load,
+              C_AVTX, sprintf("<b>%.2f%%</b>", 100*$avg_load),
+              C_PEAK, $peak_load,
+              C_PKTX, sprintf("<b>%.2f%%</b>", 100*$peak_load),
+              CS_TASK, TRUE,
+              CS_LOAD, $display_load,
+              CS_BCOL, "#0000FF",
+             );
+
+  $tasks{$task->{name}}{prio} = $task->{priority};
+  $tasks{$task->{name}}{load} = $load;
+
+  my $routs = $tasks{$task->{name}}{rout};
+
+  for my $rout (@{$task->{rout}}) {
+    ($load, $avg_load, $peak_load) = calc_load($task, $rout->{mon});
+
+    unless (exists $routs->{$rout->{name}}) {
+      $routs->{$rout->{name}} = $model->append($t_iter);
+    }
+    my $r_iter = $routs->{$rout->{name}};
+
+    $model->set($r_iter,
+                C_NAME, "<i>$rout->{name}</i>",
+                C_LOAD, $load,
+                C_LDTX, sprintf("<i>%.2f%%</i>", 100*$load),
+                C_AVER, $avg_load,
+                C_AVTX, sprintf("<i>%.2f%%</i>", 100*$avg_load),
+                C_PEAK, $peak_load,
+                C_PKTX, sprintf("<i>%.2f%%</i>", 100*$peak_load),
+                C_RUNC, "$rout->{mon}{run_counter}",
+                CS_TASK, FALSE,
+                CS_LOAD, $display_load,
+                CS_BCOL, "#7070FF",
+               );
+  }
+}
+
+sub update_load
+{
+  my $task = shift;
+  use List::Util qw( sum );
+  my $total_load = sum map { $_->{prio} < 255 ? $_->{load} : 0 } values %tasks;
+  $load->set(fraction => $total_load,
+             text => sprintf("System Load: %.1f%% @ %.3f MHz (Sync %+.2f%%)",
+                             100*$total_load, 1e-6*$task->{clock_frequency},
+                             100*($task->{cur_tick_duration} -
+                                  $task->{nom_tick_duration})/$task->{nom_tick_duration}));
+}
+
+sub update_statusbar
+{
+  use POSIX qw( strftime );
+  my $t = [gettimeofday];
+  my $delta = tv_interval($last_update, $t);
+  $last_update = $t;
+  $statusbar->pop(0);
+  $statusbar->push(0, sprintf("Last update at %s after %.1f seconds",
+                      strftime("%T", localtime), $delta));
+}
+
+sub artx_read
+{
+  $parser->insert($ser->input);
+  while ($parser->ready) {
+    if ($parser->marker) {
+      update_statusbar();
+    }
+    my $upd = $parser->get;
+    print STDERR Dumper($upd) if $OPT{debug} > 2;
+    update_model($upd);
+    update_load($upd);
+  }
+  return 1;
+}
+
+__END__
+
+=head1 NAME
+
+ARTXmon - ARTX system monitor
+
+=head1 SYNOPSIS
+
+ARTXmon [options]
+
+options:
+
+  --device     <device>   serial port device
+                          default: /dev/ttyS0
+
+  --baudrate   <rate>     serial port baud rate
+                          default: 9600
+
+  --debug                 increment debug level
+
+Options are also read from F<~/.artxmonrc>, if existent.
+For example, put something like this in your F<~/.artxmonrc>:
+
+  device=/dev/ttyUSB0
+  baudrate=230400
+
+=head1 DESCRIPTION
+
+C<ARTXmon> is a system monitor for the ARTX Atmel AVR
+microcontroller operating system.
+
+=head1 AUTHOR
+
+Marcus Holland-Moritz E<lt>mhx@cpan.orgE<gt>.
+
+=cut

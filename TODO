@@ -1,0 +1,74 @@
+- Enter low-power state during idle if no idle task configured?
+
+- Mention that sleep()s can be interrupted.
+
+- We need timers?
+
+- Make sure monitoring cycle is the same for all tasks
+  (i.e. start and end points are the same, otherwise
+  tasks may not add up to 100%)
+
+- Capture all interrupts when monitoring support is
+  enabled and move the stack pointer, otherwise stack
+  monitoring will not work.
+
+    ARTX_INTERRUPT(routine_name)
+
+  Wraps the internal interrupt defines.
+
+- Timeouts
+
+- Event driven routines:
+
+    We can implement the watchdog behaviour by using another
+    parameter to the tcb, e.g. 'timeout'. A timeout of zero
+    means no timeout. A timeout of 1 means, if more than one
+    cycle of the task is dropped, the watchdog fires.
+
+    It seems we can implement the time-slice by setting
+    up a task that runs every frame, has no timeout (just
+    like the background task), and has the priority raised
+    every 16th tick for one tick. It will then process all
+    events (until the next task is scheduled). If no more
+    events are pending, and the task has no timedriven
+    routines (so we have to keep two queues for time- and
+    eventdriven routines), the schedule is incremented
+    by a multiple of the interval until it is positive.
+
+- Implement serial tunneling in monitoring mode
+
+- By rewriting the task switching code fully in assembly, we
+  can save even more cycles by only performing a full context
+  push/pop when required. If we're not switching the context
+  at all, we only need to save the registers required for the
+  task switching code to execute.
+
+- I think we can optimize this part of the scheduler as well:
+
+  - As long as we haven't received a tick, we don't have
+    to iterate through the full list of tasks, but we can
+    continue exactly where we left in the last task switch
+
+- We need (optional) run-time niceness adjustment. This would
+  allow us to easily implement time-slice-like behaviour.
+  (We could raise the priority of the time-slice task between
+   ut0 and ut1 for one tick every 32 milliseconds. This should
+   result in exactly the same behaviour.)
+
+    This will require use to either hold a second list of
+    tasks that keeps order for the monitor, or scan the
+    whole list of tasks for the highest priority task
+    in every task switch. I tend to prefer the first solution,
+    as it keeps the scheduler simple and is only needed for
+    the monitoring case.
+
+- See if we can improve the naming of the routines when
+  running with ENABLE_MULTI_ROUT.
+
+- Improve serial interface
+
+- Implement optional monitoring support
+
+   -> capture cycles spent by kernel
+
+- Watchdog! (optional, of course)
