@@ -131,18 +131,6 @@ class DeviceBase(object):
             'MCU={0}'.format(cls.DEVICE),
         ] + list(args), stderr=subprocess.STDOUT)
 
-class DeviceMega16(DeviceBase):
-    DEVICE = 'atmega16'
-    VECTOR = '__vector_6'
-
-class DeviceMega1284(DeviceBase):
-    DEVICE = 'atmega1284p'
-    VECTOR = '__vector_13'
-
-class DeviceTiny85(DeviceBase):
-    DEVICE = 'attiny85'
-    VECTOR = '__vector_3'
-
 class TestBaseClass(TestCase, SimulavrAdapter):
     def setUp(self):
         self.symtab = SymbolTable(self.target_elf())
@@ -309,7 +297,26 @@ class TestBaseClass(TestCase, SimulavrAdapter):
 
         self.assertTrue(bg_is_last)
 
+class DeviceMega16(DeviceBase):
+    DEVICE = 'atmega16'
+    VECTOR = '__vector_6'
+
+class DeviceMega168(DeviceBase):
+    DEVICE = 'atmega168'
+    VECTOR = '__vector_11'
+
+class DeviceMega1284(DeviceBase):
+    DEVICE = 'atmega1284p'
+    VECTOR = '__vector_13'
+
+class DeviceTiny85(DeviceBase):
+    DEVICE = 'attiny85'
+    VECTOR = '__vector_3'
+
 class TestMega16(TestBaseClass, DeviceMega16):
+    pass
+
+class TestMega168(TestBaseClass, DeviceMega168):
     pass
 
 class TestMega1284(TestBaseClass, DeviceMega1284):
@@ -319,13 +326,13 @@ class TestTiny85(TestBaseClass, DeviceTiny85):
     pass
 
 if __name__ == "__main__":
-  classes = [TestMega16, TestMega1284, TestTiny85]
+  classes = [TestMega16, TestMega168, TestMega1284, TestTiny85]
   allTestsFrom = defaultTestLoader.loadTestsFromTestCase
   suite = TestSuite()
   for cls in classes:
       cls.build_target('clean')
       cls.build_target()
       suite.addTests(allTestsFrom(cls))
-  TextTestRunner(verbosity = 0).run(suite)
+  TextTestRunner(verbosity = 2).run(suite)
   for cls in classes:
       cls.build_target('realclean')
