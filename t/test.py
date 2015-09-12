@@ -115,10 +115,6 @@ class DeviceBase(object):
     __TARGET__ = 'artxtest'
 
     @classmethod
-    def artxroot(cls):
-        return os.path.split(os.path.dirname(os.path.realpath(__file__)))[0]
-
-    @classmethod
     def target(cls):
         return '{0}_{1}'.format(cls.__TARGET__, cls.DEVICE)
 
@@ -129,13 +125,9 @@ class DeviceBase(object):
     @classmethod
     def build_target(cls, *args):
         subprocess.check_output([
-            'make', '-f', '{0}/artx.mk'.format(cls.artxroot()),
+            'make',
             'TARGET={0}'.format(cls.target()),
-            'ARTX_ROOT={0}'.format(cls.artxroot()),
             'MCU={0}'.format(cls.DEVICE),
-            'SRC={0}.c'.format(cls.__TARGET__),
-            'CINCS=-I.',
-            'CDEFS=-DARTX_CONFIG_H=testconfig.h -DARTX_UNDER_TEST',
         ] + list(args), stderr=subprocess.STDOUT)
 
 class DeviceMega16(DeviceBase):
