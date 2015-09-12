@@ -34,6 +34,7 @@ from sys import argv, stderr
 
 import os
 import pysimulavr
+import re
 import subprocess
 
 class SymbolTable(object):
@@ -163,7 +164,7 @@ class TestBaseClass(TestCase, SimulavrAdapter):
 
     def get_return_addr(self):
         ## TODO: stack ptr always at 0x5d ?
-        return 2*self.addr2word(self.addr2word(0x5d) + 2)
+        return 2*self.addr2word(self.addr2word(0x5d))
 
     def run_debug(self, n):
         clock = self.clock()
@@ -204,13 +205,13 @@ class TestBaseClass(TestCase, SimulavrAdapter):
         return Breakpoint(self.bpname[addr], addr, self.device, self.clock())
 
     def addr2word(self, addr):
-      d1 = self.device.getRWMem(addr + 1)
-      d2 = self.device.getRWMem(addr)
-      return d2 + (d1 << 8)
+        d1 = self.device.getRWMem(addr + 1)
+        d2 = self.device.getRWMem(addr)
+        return d2 + (d1 << 8)
 
     def read_word(self, name, scope=None):
-      addr = self.symtab(name, stype='object', scope=scope)
-      return self.addr2word(addr & 0xfffff) if addr is not None else None
+        addr = self.symtab(name, stype='object', scope=scope)
+        return self.addr2word(addr & 0xfffff) if addr is not None else None
 
     def test_consistency(self):
         name = 'main'
@@ -268,9 +269,13 @@ class TestBaseClass(TestCase, SimulavrAdapter):
             if bp.name == self.VECTOR:
                 # timer interrupt; if the interrupt occurred exactly when we just
                 # started a new task, take a note here so that we don't count twice
-                rname = self.symtab.addr2sym(self.get_return_addr()).split(':')[-1]
-                cont.add(rname)
+                raddr = self.get_return_addr()
+                rname = self.symtab.addr2sym(raddr).split(':')[-1]
+                if re.match('\w+$', rname):
+                    cont.add(rname)
+                    # stderr.write("susp: {0} ({1:x})\n".format(rname, raddr))
             if bp.name in cont:
+                # stderr.write("cont: {0}\n".format(bp.name))
                 cont.remove(bp.name)
             else:
                 hits.append((bp.name, get_ct()))
