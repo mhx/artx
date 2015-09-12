@@ -140,7 +140,7 @@
 #elif ARTX_TICK_SOURCE == ARTX_TIMER1_OVERFLOW || \
       ARTX_TICK_SOURCE == ARTX_TIMER1_COMPARE
 
-# if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
+# if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1284P__)
 
 #  if ARTX_TICK_PRESCALER == 1
 #   define artx_PRESCALER             (1 << CS10)
@@ -334,7 +334,7 @@
 #elif ARTX_TICK_SOURCE == ARTX_TIMER1_COMPARE
 //=====================================================================
 
-# if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__)
+# if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1284P__)
 
 #  define artx_TICK_VECTOR         TIMER1_COMPA_vect
 

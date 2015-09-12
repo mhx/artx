@@ -135,6 +135,10 @@ class DeviceMega16(DeviceBase):
     DEVICE = 'atmega16'
     VECTOR = '__vector_6'
 
+class DeviceMega1284(DeviceBase):
+    DEVICE = 'atmega1284p'
+    VECTOR = '__vector_13'
+
 class DeviceTiny85(DeviceBase):
     DEVICE = 'attiny85'
     VECTOR = '__vector_3'
@@ -308,11 +312,14 @@ class TestBaseClass(TestCase, SimulavrAdapter):
 class TestMega16(TestBaseClass, DeviceMega16):
     pass
 
+class TestMega1284(TestBaseClass, DeviceMega1284):
+    pass
+
 class TestTiny85(TestBaseClass, DeviceTiny85):
     pass
 
 if __name__ == "__main__":
-  classes = [TestMega16, TestTiny85]
+  classes = [TestMega16, TestMega1284, TestTiny85]
   allTestsFrom = defaultTestLoader.loadTestsFromTestCase
   suite = TestSuite()
   for cls in classes:
