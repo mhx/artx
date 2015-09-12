@@ -18,6 +18,9 @@ else
   NEWLINE = @
 endif
 
+BUILDBASE = .build
+BUILDDIR = $(BUILDBASE)/$(MCU)-$(BUILD)
+
 # List C source files here. (C dependencies are automatically generated.)
 ARTX_SRC = src/task.c \
            src/serial.c \
@@ -29,7 +32,7 @@ ARTX_SRC = src/task.c \
            src/isr.c \
            src/twi.c \
            src/date.c
-ARTX_OBJ = $(ARTX_SRC:%.c=.build/artx/%.o)
+ARTX_OBJ = $(ARTX_SRC:%.c=$(BUILDDIR)/artx/%.o)
 ARTX_LST = $(ARTX_OBJ:.o=.lst)
 
 # Optimization level, can be [0, 1, 2, 3, s].
@@ -235,7 +238,7 @@ MSG_RESET = \\033[0m
 
 
 # Define all object files.
-OBJ = $(SRC:%.c=.build/%.o)
+OBJ = $(SRC:%.c=$(BUILDDIR)/%.o)
 
 # Define all listing files.
 LST = $(OBJ:%.o=%.lst)
@@ -365,16 +368,16 @@ extcoff: $(TARGET).elf
 
 # Compile: create object files from C source files.
 # TODO: handle (sub)directories
-.build/%.o : %.c
+$(BUILDDIR)/%.o : %.c
 	$(NEWLINE)
 	@echo -e "$(MSG_USER)$(MSG_COMPILING) $< [USER]$(MSG_RESET)"
-	@mkdir -p .build >/dev/null
+	@mkdir -p $(BUILDDIR) >/dev/null
 	$(ECHO) $(CC) -c $(ALL_CFLAGS) $< -o $@
 
-.build/artx/src/%.o : $(ARTX_ROOT)/src/%.c
+$(BUILDDIR)/artx/src/%.o : $(ARTX_ROOT)/src/%.c
 	$(NEWLINE)
 	@echo -e "$(MSG_ARTX)$(MSG_COMPILING) $(subst $(ARTX_ROOT)/,,$<) [ARTX]$(MSG_RESET)"
-	@mkdir -p .build/artx/src >/dev/null
+	@mkdir -p $(BUILDDIR)/artx/src >/dev/null
 	$(ECHO) $(CC) -c $(ALL_CFLAGS) $< -o $@
 
 
@@ -428,7 +431,7 @@ clean_list :
 realclean_list :
 	$(REMOVE_REC) doc
 	$(REMOVE_REC) .dep
-	$(REMOVE_REC) .build
+	$(REMOVE_REC) $(BUILDBASE)
 
 debug:
 	avr-gdbtui -x gdbinit
