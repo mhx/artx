@@ -32,6 +32,7 @@
  */
 
 #include "artx/artx.h"
+#include "artx/specs.h"
 
 
 /**
@@ -74,16 +75,6 @@
  *  number of clock cycles per tick using #ARTX_TICK_DURATION.
  */
 #define ARTX_TIMER1_COMPARE 3
-
-/**
- *  Use external interrupt as tick source
- *
- *  \hideinitializer
- *
- *  Setting #ARTX_TICK_SOURCE to this value will trigger the
- *  kernel tick on an external interrupt.
- */
-#define ARTX_TICK_EXTERNAL_INT 4
 
 /**
  *  Choose prescaler for tick source
@@ -140,7 +131,11 @@
 #elif ARTX_TICK_SOURCE == ARTX_TIMER1_OVERFLOW || \
       ARTX_TICK_SOURCE == ARTX_TIMER1_COMPARE
 
-# if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega168__)
+# if !defined(artx_TIMER1_BITS)
+
+#  error "TODO: currently unsupported"
+
+# elif artx_TIMER1_BITS == 16
 
 #  if ARTX_TICK_PRESCALER == 1
 #   define artx_PRESCALER             (1 << CS10)
@@ -156,7 +151,7 @@
 #   error "Invalid prescaler for chosen tick source"
 #  endif
 
-# elif defined(__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
+# elif artx_TIMER1_BITS == 8
 
 #  if ARTX_TICK_PRESCALER == 1
 #   define artx_PRESCALER                                                       (1 << CS10)
@@ -192,8 +187,6 @@
 #   error "Invalid prescaler for chosen tick source"
 #  endif
 
-# else
-#  error "TODO: currently unsupported"
 # endif
 
 #endif
@@ -334,14 +327,18 @@
 #elif ARTX_TICK_SOURCE == ARTX_TIMER1_COMPARE
 //=====================================================================
 
-# if defined(__AVR_ATmega16__) || defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega168__)
-
 #  define artx_TICK_VECTOR         TIMER1_COMPA_vect
-
 #  define artx_TIMER_REG           TCNT1
-#  define artx_TIMER_TYPE          uint16_t
 
 #  define artx_TIMER_TOP           (ARTX_TICK_DURATION - 1)
+
+# if !defined(artx_TIMER1_BITS)
+
+#  error "TODO: currently unsupported"
+
+# elif artx_TIMER1_BITS == 16
+
+#  define artx_TIMER_TYPE          uint16_t
 
 #  define ARTX_TICK_INIT                                              \
           do {                                                        \
@@ -361,14 +358,9 @@
 
 #  endif
 
-# elif defined(__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
+# elif artx_TIMER1_BITS == 8
 
-#  define artx_TICK_VECTOR         TIMER1_COMPA_vect
-
-#  define artx_TIMER_REG           TCNT1
 #  define artx_TIMER_TYPE          uint8_t
-
-#  define artx_TIMER_TOP           (ARTX_TICK_DURATION - 1)
 
 #  define ARTX_TICK_INIT                                              \
           do {                                                        \
@@ -390,23 +382,7 @@
 
 #  endif
 
-# else
-#  error "TODO: currently unsupported"
 # endif
-
-//=====================================================================
-#elif ARTX_TICK_SOURCE == ARTX_TICK_EXTERNAL_INT
-//=====================================================================
-
-# define artx_TICK_VECTOR         ARTX_TICK_INT_VECTOR
-
-# define artx_TIMER_REG           0
-# define artx_TIMER_TYPE          uint16_t
-
-# define artx_TIMER_TOP           0
-
-# define ARTX_TICK_INIT                                               \
-         do {} while (0)
 
 //=====================================================================
 #else

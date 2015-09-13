@@ -30,7 +30,10 @@
 #define ARTX_SYNC_TICKS            500
 #define ARTX_TICK_SOURCE       ARTX_TIMER1_COMPARE
 
-#if defined(__AVR_ATmega16__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega168__)
+#if defined(__AVR_ATmega16__) || \
+    defined(__AVR_ATmega324P__) || \
+    defined(__AVR_ATmega1284P__) || \
+    defined(__AVR_ATmega168__)
 # define ARTX_TICK_DURATION        2000
 #elif defined(__AVR_ATtiny85__)
 # define ARTX_TICK_PRESCALER          8
