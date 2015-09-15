@@ -323,7 +323,7 @@ class TestMega16(TestBaseClass, DeviceMega16):
 class TestMega168(TestBaseClass, DeviceMega168):
     pass
 
-class TestMega324(TestBaseClass, DeviceMega1284):
+class TestMega324(TestBaseClass, DeviceMega324):
     pass
 
 class TestMega1284(TestBaseClass, DeviceMega1284):
@@ -333,7 +333,13 @@ class TestTiny85(TestBaseClass, DeviceTiny85):
     pass
 
 if __name__ == "__main__":
-  classes = [TestMega16, TestMega168, TestMega324, TestMega1284, TestTiny85]
+  classes = [
+      TestMega16,
+      TestMega168,
+      TestMega324,
+      TestMega1284,
+      TestTiny85
+  ]
   allTestsFrom = defaultTestLoader.loadTestsFromTestCase
   suite = TestSuite()
   for cls in classes:
